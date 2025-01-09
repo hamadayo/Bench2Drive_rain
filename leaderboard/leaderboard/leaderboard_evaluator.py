@@ -309,6 +309,8 @@ class LeaderboardEvaluator(object):
 
         Depending on what code fails, the simulation will either stop the route and
         continue from the next one, or report a crash and stop.
+        設定されたシナリオを読み込み、実行する
+        どの部分で失敗したかによって、シミュレーションは次のルートに進むか、クラッシュを報告して停止するか決まる
         """
         crash_message = ""
         entry_status = "Started"
@@ -319,6 +321,8 @@ class LeaderboardEvaluator(object):
         route_name = f"{config.name}_rep{config.repetition_index}"
         scenario_name = config.scenario_configs[0].name
         town_name = str(config.town)
+        # print("config weather", config.weather[0][1])
+        # print("config weather3", config.weather[1][1])
         weather_id = get_weather_id(config.weather[0][1])
         currentDateAndTime = datetime.now()
         currentTime = currentDateAndTime.strftime("%m_%d_%H_%M_%S")
@@ -328,8 +332,10 @@ class LeaderboardEvaluator(object):
         print("\033[1m> Loading the world\033[0m", flush=True)
 
         # Load the world and the scenario
+        # townをロード、シナリオのセットアップ、統計マネージャーに登録
         try:
             self._load_and_wait_for_world(args, config.town)
+            print("debug mode", args.debug)
             self.route_scenario = RouteScenario(world=self.world, config=config, debug_mode=args.debug)
             self.statistics_manager.set_scenario(self.route_scenario)
 
@@ -347,37 +353,47 @@ class LeaderboardEvaluator(object):
 
         # Set up the user's agent, and the timer to avoid freezing the simulation
         try:
+            # 車両
             self._agent_watchdog = Watchdog(args.timeout)
             self._agent_watchdog.start()
+            # エージェントクラスのクラス名を取得し、エージェントクラスのオブジェクトを取得
             agent_class_name = getattr(self.module_agent, 'get_entry_point')()
             agent_class_obj = getattr(self.module_agent, agent_class_name)
 
             # Start the ROS1 bridge server only for ROS1 based agents.
+            # ros1の通信ができるように、サーバーを起動
             if getattr(agent_class_obj, 'get_ros_version')() == 1 and self._ros1_server is None:
                 from leaderboard.autoagents.ros1_agent import ROS1Server
                 self._ros1_server = ROS1Server()
                 self._ros1_server.start()
 
+            # エージェントのインスタンスを作成し、エージェントの初期化を行う
             self.agent_instance = agent_class_obj(args.host, args.port, args.debug)
+            # ルートの情報をエージェントに渡す
             self.agent_instance.set_global_plan(self.route_scenario.gps_route, self.route_scenario.route)
             args.agent_config = args.agent_config + '+' + save_name
             self.agent_instance.setup(args.agent_config)
 
             # Check and store the sensors
+            # センサーの設定を取得し、エージェントのセンサーを取得
             if not self.sensors:
                 self.sensors = self.agent_instance.sensors()
                 track = self.agent_instance.track
 
                 validate_sensor_configuration(self.sensors, track, args.track)
 
+                # センサー情報を統計マネージャーに登録
                 self.sensor_icons = [sensors_to_icons[sensor['type']] for sensor in self.sensors]
                 self.statistics_manager.save_sensors(self.sensor_icons)
-                self.statistics_manager.write_statistics()
+                # self.statistics_manager.write_statistics()
 
                 self.sensors_initialized = True
 
+            # watchdogはタイムアウトを検出する
             self._agent_watchdog.stop()
             self._agent_watchdog = None
+
+            # jsonファイル名はsave_name = f"{route_name}_{town_name}_{scenario_name}_{weather_id}_{currentTime}"
 
         except SensorConfigurationInvalid as e:
             # The sensors are invalid -> set the ejecution to rejected and stop
@@ -405,11 +421,13 @@ class LeaderboardEvaluator(object):
         # Run the scenario
         try:
             # Load scenario and run it
+            # carlaの録画機能を使用し、車両や歩行者の動きをlogファイルに記録
             if args.record:
                 self.client.start_recorder("{}/{}_rep{}.log".format(args.record, config.name, config.repetition_index))
+            # ここで車両や歩行者をスポーンさせ、シナリオを実行
             self.manager.load_scenario(self.route_scenario, self.agent_instance, config.index, config.repetition_index)
             self.manager.tick_count = 0
-            self.manager.run_scenario()
+            self.manager.run_scenario(config.index)
 
         except AgentError:
             # The agent has failed -> stop the route
@@ -431,6 +449,8 @@ class LeaderboardEvaluator(object):
             entry_status, crash_message = FAILURE_MESSAGES["Simulation"]
 
         # Stop the scenario
+        # シナリオの終了処理
+        # 統計マネージャーに統計情報を登録し、録画を停止
         try:
             print("\033[1m> Stopping the route\033[0m", flush=True)
             self.manager.stop_scenario()
@@ -454,31 +474,47 @@ class LeaderboardEvaluator(object):
         """
         Run the challenge mode
         """
+        # 指定されたxmlからルートを読み込む
         route_indexer = RouteIndexer(args.routes, args.repetitions, args.routes_subset)
+        print(f"Executing routes from: {args.routes}")
+        print(f"Repetitions: {args.repetitions}, Subset: {args.routes_subset}")
 
+        # 前回の実行状況を確認し、再開するかどうかを決定
         if args.resume:
             resume = route_indexer.validate_and_resume(args.checkpoint)
         else:
             resume = False
 
         if resume:
+            # 統計データを書き込む
             self.statistics_manager.add_file_records(args.checkpoint)
         else:
             self.statistics_manager.clear_records()
+        # 現在のルートのインデックスと、総ルート数を保存。jsonに書き込む
         self.statistics_manager.save_progress(route_indexer.index, route_indexer.total)
-        self.statistics_manager.write_statistics()
+        # self.statistics_manager.write_statistics()
 
         crashed = False
         t1 = time.time()
+        print(f'route_indexer.peek()={route_indexer.peek()}')
+        # peekで実行するべきルートが残っているか確認
+        # つまり１シナリオごとに動作
         while route_indexer.peek() and not crashed:
 
             # Run the scenario
+            # 次のルートの設定を取得
             config = route_indexer.get_next_config()
+            print(f"Running scenario: {config.name}")
+            print(f"Town: {config.town}, Index: {config.index}, Weather: {config.weather}")
+
+            # 設定を読み込み、シナリオを実行
             crashed = self._load_and_run_scenario(args, config)
             print(crashed, flush=True)
             # Save the progress and write the route statistics
+            # 現在の進行状況と、総ルート数を保存。jsonに書き込む
             self.statistics_manager.save_progress(route_indexer.index, route_indexer.total)
-            self.statistics_manager.write_statistics()
+            # self.statistics_manager.write_statistics()
+            # シナリオが異常終了したら処理を強制終了
             if crashed:
                 print(f'{route_indexer.index} crash, [{route_indexer.index}/{route_indexer.total}], please restart', flush=True)
                 break
@@ -490,17 +526,28 @@ class LeaderboardEvaluator(object):
         # Go back to asynchronous mode
         self._reset_world_settings()
 
+        # 新しいディレクトリを作成
+        base_dir = "./results"
+        new_dir_index = 0
+        new_dir = os.path.join(base_dir, str(new_dir_index))
+        os.makedirs(new_dir, exist_ok=True)
+        print(f"new_dir={new_dir}")
+
+        # すべてのルートが終了した場合、統計データを保存
         if not crashed:
             # Save global statistics
             print(f"cost time={time.time()-t1}", flush=True)
             print("\033[1m> Registering the global statistics\033[0m", flush=True)
             self.statistics_manager.compute_global_statistics()
-            self.statistics_manager.validate_and_write_statistics(self.sensors_initialized, crashed)
+            self.statistics_manager.validate_and_write_statistics(self.sensors_initialized, crashed, new_dir)
         
+        # 異常終了した場合、使用中のgpuを特定し、強制終了
         if crashed:
             cmd2 = "ps -ef | grep '-graphicsadapter="+ str(args.gpu_rank) + "' | grep -v grep | awk '{print $2}' | xargs -r kill -9"
             server = subprocess.Popen(cmd2, shell=True, preexec_fn=os.setsid)
             atexit.register(os.killpg, server.pid, signal.SIGKILL)
+        
+        new_dir_index += 1
 
         return crashed
 
@@ -508,6 +555,7 @@ def main():
     description = "CARLA AD Leaderboard Evaluation: evaluate your Agent in CARLA scenarios\n"
 
     # general parameters
+    # hostは接続するサーバーのIPアドレス、portは接続するサーバーの通信窓口(サーバーマシンの場所と、窓口を設定)
     parser = argparse.ArgumentParser(description=description, formatter_class=RawTextHelpFormatter)
     parser.add_argument('--host', default='localhost',
                         help='IP of the host server (default: localhost)')
@@ -525,9 +573,13 @@ def main():
                         help='Set the CARLA client timeout value in seconds')
 
     # simulation setup
+    # xmlファイルのパスを指定する
     parser.add_argument('--routes', required=True,
                         help='Name of the routes file to be executed.')
-    parser.add_argument('--routes-subset', default='', type=str,
+    # !!!!!!!!!!特定のルートのみを実行する場合に指定する
+    # parser.add_argument('--routes-subset', default='26990, 24841, 24784, 24781, 24211, 2416', type=str,
+    #                     help='Execute a specific set of routes')
+    parser.add_argument('--routes-subset', default='9', type=str,
                         help='Execute a specific set of routes')
     parser.add_argument('--repetitions', type=int, default=1,
                         help='Number of repetitions per route.')
@@ -548,8 +600,11 @@ def main():
                         help="Path to checkpoint used for saving live results")
     parser.add_argument("--gpu-rank", type=int, default=0)
     arguments = parser.parse_args()
+    print(f"Selected XML file: {arguments.routes}")
 
+    # シミュレーション中に収集された統計データを管理
     statistics_manager = StatisticsManager(arguments.checkpoint, arguments.debug_checkpoint)
+    # CARLAサーバーのセットアップ、ルートとシナリオの読み込み、エージェントの初期化、統計データの収集などを担当
     leaderboard_evaluator = LeaderboardEvaluator(arguments, statistics_manager)
     crashed = leaderboard_evaluator.run(arguments)
 

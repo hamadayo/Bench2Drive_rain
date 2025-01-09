@@ -34,6 +34,10 @@ class ScenarioConfigurationParser(object):
         If scenario_name starts with "group:" all scenarios that
         have that type are parsed and returned. Otherwise only the
         scenario that matches the scenario_name is parsed and returned.
+
+        srunner/examplesにあるすべてのシナリオ設定ファイルと追加の設定ファイルを解析し、ScenarioConfigurationsのリストを提供します。
+        scenario_nameが「group:」で始まる場合、そのタイプに該当するすべてのシナリオが解析されて返されます。
+        それ以外の場合は、scenario_nameに一致するシナリオのみが解析されて返されます。
         """
 
         if scenario_name.startswith("group:"):

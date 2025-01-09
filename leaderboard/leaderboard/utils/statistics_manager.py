@@ -17,6 +17,7 @@ import math
 from srunner.scenariomanager.traffic_events import TrafficEventType
 
 from leaderboard.utils.checkpoint_tools import fetch_dict, save_dict
+import os
 
 PENALTY_VALUE_DICT = {
     # Traffic events that substract a set amount of points.
@@ -231,8 +232,17 @@ class StatisticsManager(object):
         for i, record in enumerate(self._results.checkpoint.records):
             record.index = i
 
-    def write_live_results(self, index, ego_speed, ego_control, ego_location):
+    def write_live_results(self, index, ego_speed, ego_control, ego_location, base_dir="./results"):
         """Writes live results"""
+        os.makedirs(base_dir, exist_ok=True)  # ベースディレクトリがなければ作成
+
+        # 新しいファイル名をインクリメントで決定
+        new_file_index = 0
+        file_path = os.path.join(base_dir, f"live_results_{new_file_index}.txt")
+        while os.path.exists(file_path):
+            new_file_index += 1
+            file_path = os.path.join(base_dir, f"live_results_{new_file_index}.txt")
+
         route_record = self._results.checkpoint.records[index]
 
         all_events = []
@@ -242,7 +252,7 @@ class StatisticsManager(object):
 
         all_events.sort(key=lambda e: e.get_frame(), reverse=True)
 
-        with open(self._debug_endpoint, 'w') as f:
+        with open(file_path, 'w') as f:
             f.write("Route id: {}\n\n"
                     "Scenario: {}\n\n"
                     "Town name: {}\n\n"
@@ -551,7 +561,7 @@ class StatisticsManager(object):
 
         self.save_entry_status(entry_status)
 
-    def validate_and_write_statistics(self, sensors_initialized, crashed):
+    def validate_and_write_statistics(self, sensors_initialized, crashed, new_dir=None):
         """
         Makes sure that all the relevant data is there.
         Changes the 'entry status' to 'Invalid' if this isn't the case
@@ -592,11 +602,23 @@ class StatisticsManager(object):
 
             self.save_entry_status('Invalid')
 
-        self.write_statistics()
+        self.write_statistics(new_dir)
 
-    def write_statistics(self):
+    def write_statistics(self, new_dir=None):
         """
         Writes the results into the endpoint. Meant to be used only for partial evaluations,
         use 'validate_and_write_statistics' for the final one as it only validates the data.
         """
-        save_dict(self._endpoint, self._results.to_json())
+         # ベースディレクトリの設定
+        base_dir = "./results"
+        if new_dir:
+            base_dir = new_dir
+        os.makedirs(base_dir, exist_ok=True)
+
+        print(f'Base dirctory: {base_dir}')
+        file_path = os.path.join(base_dir, f"result.json")
+
+        # 結果を保存
+        save_dict(file_path, self._results.to_json())
+
+        print(f"Statistics saved in: {self._endpoint}")

@@ -54,6 +54,7 @@ class RouteScenario(BasicScenario):
     """
     Implementation of a RouteScenario, i.e. a scenario that consists of driving along a pre-defined route,
     along which several smaller scenarios are triggered
+    RouteScenario の実装、すなわち事前に定義されたルートに沿って運転するシナリオであり、そのルートに沿っていくつかの小規模なシナリオがトリガーされるもの
     """
 
     category = "RouteScenario"
@@ -63,7 +64,10 @@ class RouteScenario(BasicScenario):
     def __init__(self, world, config, debug_mode=0, criteria_enable=True):
         """
         Setup all relevant parameters and create scenarios along route
+        ルートに沿ってすべての関連パラメータを設定し、シナリオを作成する。
         """
+        print("RouteScenario from leaderboard")
+        # 初期化
         self.client = CarlaDataProvider.get_client()
         self.config = config
         self.route = self._get_route(config)
@@ -87,6 +91,7 @@ class RouteScenario(BasicScenario):
         self.missing_scenario_configurations = scenario_configurations.copy()
 
         ego_vehicle = self._spawn_ego_vehicle()
+        print(f'debug mode: {debug_mode}')
         if ego_vehicle is None:
             raise ValueError("Shutting down, couldn't spawn the ego vehicle")
 
@@ -96,6 +101,7 @@ class RouteScenario(BasicScenario):
         self._parked_ids = []
         self._get_parking_slots()
 
+        # Ego Vehicle とその他の初期化
         super(RouteScenario, self).__init__(
             config.name, [ego_vehicle], config, world, debug_mode > 3, False, criteria_enable
         )
@@ -115,9 +121,18 @@ class RouteScenario(BasicScenario):
         - world: CARLA world
         - config: Scenario configuration (RouteConfiguration)
         - debug_mode: boolean to decide whether or not the route poitns are printed
+        構成からルートを取得し、希望の密度に補間して、
+        CarlaDataProvider に保存し、エージェントに送信します。
+
+        パラメータ:
+        world: CARLA のワールドオブジェクト
+        config: シナリオ設定（RouteConfiguration）
+        debug_mode: ルートポイントを出力するかどうかを決定するブール値
         """
 
         # Prepare route's trajectory (interpolate and add the GPS route)
+        # config.keypointsは、x,y,zの座標や方向で、それらを保管して、よりスムーズなルートを作成する
+        # gps_routeはgps座標のリスト（x,y,roadoption）で、routeはcarla.Transform（位置、回転情報）のリスト
         self.gps_route, self.route = interpolate_trajectory(config.keypoints)
         return self.route
 
@@ -128,9 +143,21 @@ class RouteScenario(BasicScenario):
 
         Parameters:
         - scenario_configs: list of ScenarioConfiguration
+        与えられたシナリオのリストから、トリガーされる意味がないものをフィルタリングします。
+        それらはルートから遠すぎるか、ルートの形状に適合しないものです。
+
+        パラメータ:
+        scenario_configs: ScenarioConfiguration のリスト
         """
+        print("=== Scenario Configurations ===")
         new_scenarios_config = []
         for scenario_number, scenario_config in enumerate(scenario_configs):
+
+            print(f"Scenario {scenario_number}:")
+            print(f"  Name: {scenario_config.name}")
+            print(f"  Type: {scenario_config.type}")
+            print(f"  Trigger Points: {scenario_config.trigger_points}")
+            print(f"  Other Info: {scenario_config.other_parameters}")
             trigger_point = scenario_config.trigger_points[0]
             if not RouteParser.is_scenario_at_route(trigger_point, self.route):
                 print("WARNING: Ignoring scenario '{}' as it is too far from the route".format(scenario_config.name))
@@ -138,11 +165,15 @@ class RouteScenario(BasicScenario):
 
             scenario_config.route_var_name = "ScenarioRouteNumber{}".format(scenario_number)
             new_scenarios_config.append(scenario_config)
+            print(f"Trigger point: {trigger_point.location.x}, {trigger_point.location.y}, {trigger_point.location.z}")
+            print(f"Route variable name: {scenario_config.route_var_name}")
 
         return new_scenarios_config
 
     def _spawn_ego_vehicle(self):
         """Spawn the ego vehicle at the first waypoint of the route"""
+        # routeの最初のwaypointのpositionを取得し、その位置を少し上に移動させる
+        # <position x="-497.6" y="3672.9" z="364.9" />
         elevate_transform = self.route[0][0]
         elevate_transform.location.z += 0.5
 
@@ -152,7 +183,9 @@ class RouteScenario(BasicScenario):
         if not ego_vehicle:
             return
 
+        # カメラの視点を設定
         spectator = self.world.get_spectator()
+        # 高さを上げてカメラを真下に向ける
         spectator.set_transform(carla.Transform(elevate_transform.location + carla.Location(z=50),
                                                     carla.Rotation(pitch=-90)))
 
@@ -204,20 +237,26 @@ class RouteScenario(BasicScenario):
 
     def spawn_parked_vehicles(self, ego_vehicle, max_scenario_distance=10):
         """Spawn parked vehicles."""
+        print("[DEBUG] spawn_parked_vehicles has been called")
         def is_close(slot_location, ego_location):
+            # 自車両と、駐車場所の距離が閾値以下の場合、Trueを返す(例自社料と駐車場所が10m以内)
             return slot_location.distance(ego_location) < self.PARKED_VEHICLES_INIT_THRESHOLD
         def is_free(slot_location):
+            # slot_location（駐車場所）がもう専有されているか（occupued_slot）を判定
             for occupied_slot in self.occupied_parking_locations:
+                # 閾値以下の場合（もう専有済みの場合）、Falseを返す。専有されていない場合、Trueを返す
                 if slot_location.distance(occupied_slot) < max_scenario_distance:
                     return False
             return True
 
         new_parked_vehicles = []
 
+        # 自車両の位置を取得
         ego_location = CarlaDataProvider.get_location(ego_vehicle)
         if ego_location is None:
             return
 
+        # 利用可能な駐車場所をtransformオブジェクト
         for slot in self.available_parking_locations:
             slot_transform = carla.Transform(
                 location=carla.Location(slot["location"][0], slot["location"][1], slot["location"][2]),
@@ -226,13 +265,16 @@ class RouteScenario(BasicScenario):
 
             # Add all vehicles that are close to the ego and in a free space
             if is_close(slot_transform.location, ego_location) and is_free(slot_transform.location):
+                # 駐車車両のメッシュを設定
                 mesh_bp = CarlaDataProvider.get_world().get_blueprint_library().filter("static.prop.mesh")[0]
                 mesh_bp.set_attribute("mesh_path", slot["mesh"])
                 mesh_bp.set_attribute("scale", "0.9")
                 new_parked_vehicles.append(carla.command.SpawnActor(mesh_bp, slot_transform))
+                # 駐車場所を利用済みにする
                 self.available_parking_locations.remove(slot)
 
         # Add the actors to _parked_ids
+        # スポーンで来ていた場合、_parked_idsにアクターを追加
         for response in CarlaDataProvider.get_client().apply_batch_sync(new_parked_vehicles):
             if not response.error:
                 self._parked_ids.append(response.actor_id)
@@ -289,27 +331,37 @@ class RouteScenario(BasicScenario):
                 # TODO: Filter out any class that isn't a child of BasicScenario
                 all_scenario_classes[member[0]] = member[1]
 
+        # print("=== All Scenario Classes ===")
+        # for class_name, class_obj in all_scenario_classes.items():
+            # print(f"Class Name: {class_name}, Class Object: {class_obj}")
+
         return all_scenario_classes
 
     def build_scenarios(self, ego_vehicle, debug=False):
         """
         Initializes the class of all the scenarios that will be present in the route.
         If a class fails to be initialized, a warning is printed but the route execution isn't stopped
+        ルート上に存在するすべてのシナリオのクラスを初期化します。
+        もしクラスの初期化に失敗した場合、警告が表示されますが、ルートの実行は中断されません
         """
         new_scenarios = []
 
         if self.all_scenario_classes is None:
+            print("uuuuuuu")
             self.all_scenario_classes = self.get_all_scenario_classes()
         if self.ego_data is None:
+            print("oooooooo")
             self.ego_data = ActorConfigurationData(ego_vehicle.type_id, ego_vehicle.get_transform(), 'hero')
 
         # Part 1. Check all scenarios that haven't been initialized, starting them if close enough to the ego vehicle
+        # み初期化のシナリオをループして、全てのみ初期化シナリオを処理
         for scenario_config in self.missing_scenario_configurations:
             scenario_config.ego_vehicles = [self.ego_data]
             scenario_config.route = self.route
 
             try:
                 scenario_class = self.all_scenario_classes[scenario_config.type]
+                print("Scenario Class:", scenario_class)
                 trigger_location = scenario_config.trigger_points[0].location
 
                 ego_location = CarlaDataProvider.get_location(ego_vehicle)
@@ -317,10 +369,13 @@ class RouteScenario(BasicScenario):
                     continue
 
                 # Only init scenarios that are close to ego
+                # じしゃがトリガーポイントの近くにいる場合のみ初期化
                 if trigger_location.distance(ego_location) < self.INIT_THRESHOLD:
                     scenario_instance = scenario_class(self.world, [ego_vehicle], scenario_config, timeout=self.timeout)
 
                     # Add new scenarios to list
+                    # 新しいシナリオをリストに追加
+                    # 初期化済みなので、リストから削除
                     self.list_scenarios.append(scenario_instance)
                     new_scenarios.append(scenario_instance)
                     self.missing_scenario_configurations.remove(scenario_config)
@@ -337,6 +392,7 @@ class RouteScenario(BasicScenario):
                             debug_loc, str(scenario_config.name), draw_shadow=False,
                             color=carla.Color(0, 0, 128), life_time=self.timeout, persistent_lines=True
                         )
+                # print("Scenario Config Details:", vars(scenario_config))
 
             except Exception as e:
                 print(f"\033[93mSkipping scenario '{scenario_config.name}' due to setup error: {e}")
@@ -348,8 +404,10 @@ class RouteScenario(BasicScenario):
 
         # Part 2. Add their behavior onto the route's behavior tree
         for scenario in new_scenarios:
+            # 初期化されたシナリオを動作ツリーに追加
 
             # Add behavior
+            # 動作ツリーを全体の動作ノードに追加
             if scenario.behavior_tree is not None:
                 self.behavior_node.add_child(scenario.behavior_tree)
                 self.scenario_triggerer.add_blackboard(
@@ -357,6 +415,7 @@ class RouteScenario(BasicScenario):
                 )
 
             # Add the criteria criteria
+            # 評価基準をクリテリアノードに追加
             scenario_criteria = scenario.get_criteria()
             if len(scenario_criteria) == 0:
                 continue
@@ -382,6 +441,12 @@ class RouteScenario(BasicScenario):
 
         It also adds the BackgroundActivity scenario, which will be active throughout the whole route.
         This behavior never ends and the end condition is given by the RouteCompletionTest criterion.
+        ルートの一部であるすべてのシナリオを並列で実行する振る舞いを作成します。  
+        これらのサブ振る舞いにはトリガー条件が追加されており、エージェントが  
+        トリガーポイントに近づくまでアクティブにならないようになっています。
+
+        さらに、ルート全体でアクティブな `BackgroundActivity` シナリオも追加されます。  
+        この振る舞いは終了することはなく、終了条件は `RouteCompletionTest` 基準によって定義されます。
         """
         scenario_trigger_distance = DIST_THRESHOLD  # Max trigger distance between route and scenario
 

@@ -44,6 +44,7 @@ class RouteIndexer():
         Otherwise, the resume is canceled, and the leaderboard goes back to normal behavior
         """
         data = fetch_dict(endpoint)
+        print(f"Endpoint being used: {endpoint}")
         if not data:
             print('Problem reading checkpoint. Found no data')
             return False

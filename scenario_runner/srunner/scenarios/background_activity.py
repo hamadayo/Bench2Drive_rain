@@ -209,8 +209,9 @@ class BackgroundBehavior(AtomicBehavior):
         self._road_dict = {}  # Dictionary lane key -> actor source
         self._road_checker_index = 0
 
-        self._road_front_vehicles = 2  # Amount of vehicles in front of the ego
-        self._road_back_vehicles = 2  # Amount of vehicles behind the ego
+        #!!!!!! scenario runner以外の動的車両の生成
+        self._road_front_vehicles = 0  # Amount of vehicles in front of the ego
+        self._road_back_vehicles = 0 # Amount of vehicles behind the ego
         self._radius_increase_ratio = 1.7  # Meters the radius increases per m/s of the ego
 
         self._base_junction_detection = 30
@@ -2546,6 +2547,7 @@ class BackgroundBehavior(AtomicBehavior):
 
     def _destroy_actor(self, actor):
         """Destroy the actor and all its references"""
+        # print("!!!!!!!6666666")
         self._remove_actor_info(actor)
         try:
             actor.set_autopilot(False, self._tm_port)

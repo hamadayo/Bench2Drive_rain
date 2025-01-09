@@ -26,6 +26,7 @@ from srunner.scenariomanager.watchdog import Watchdog
 from leaderboard.autoagents.agent_wrapper import AgentWrapperFactory, AgentError, TickRuntimeError
 from leaderboard.envs.sensor_interface import SensorReceivedNoData
 from leaderboard.utils.result_writer import ResultOutputProvider
+import os
 
 
 class ScenarioManager(object):
@@ -133,10 +134,10 @@ class ScenarioManager(object):
         """
         while self._running:
             self.scenario.build_scenarios(self.ego_vehicles[0], debug=debug)
-            self.scenario.spawn_parked_vehicles(self.ego_vehicles[0])
+            # self.scenario.spawn_parked_vehicles(self.ego_vehicles[0])
             time.sleep(1)
 
-    def run_scenario(self):
+    def run_scenario(self, index):
         """
         Trigger the start of the scenario and wait for it to finish/fail
         """
@@ -156,11 +157,15 @@ class ScenarioManager(object):
         # Thread for build_scenarios
         self._scenario_thread = threading.Thread(target=self.build_scenarios_loop, args=(self._debug_mode > 0, ))
         self._scenario_thread.start()
+        base_dir = "./results"
+        new_dir_index = index
+        new_dir = os.path.join(base_dir, str(new_dir_index))
+        os.makedirs(new_dir, exist_ok=True)
 
         while self._running:
-            self._tick_scenario()
+            self._tick_scenario(new_dir)
 
-    def _tick_scenario(self):
+    def _tick_scenario(self, new_dir):
         """
         Run next tick of scenario and the agent and tick the world.
         """
@@ -179,8 +184,8 @@ class ScenarioManager(object):
             self.tick_count += 1
             self._watchdog.pause()
 
-            if self.tick_count > 4000:
-                raise TickRuntimeError("RuntimeError, tick_count > 4000")
+            if self.tick_count > 1000:
+                raise TickRuntimeError("RuntimeError, tick_count > 1000")
 
             try:
                 self._agent_watchdog.resume()
@@ -202,22 +207,24 @@ class ScenarioManager(object):
             py_trees.blackboard.Blackboard().set("AV_control", ego_action, overwrite=True)
             self.scenario_tree.tick_once()
 
-            if self._debug_mode > 1:
+            if self._debug_mode == 0:
                 self.compute_duration_time()
 
-                # Update live statistics
-                self._statistics_manager.compute_route_statistics(
-                    self.route_index,
-                    self.scenario_duration_system,
-                    self.scenario_duration_game,
-                    failure_message=""
-                )
-                self._statistics_manager.write_live_results(
-                    self.route_index,
-                    self.ego_vehicles[0].get_velocity().length(),
-                    ego_action,
-                    self.ego_vehicles[0].get_location()
-                )
+                # !!!!!live_results 保存ここ
+                if self.tick_count % 5 == 0:
+                    self._statistics_manager.compute_route_statistics(
+                        self.route_index,
+                        self.scenario_duration_system,
+                        self.scenario_duration_game,
+                        failure_message=""
+                    )
+                    self._statistics_manager.write_live_results(
+                        self.route_index,
+                        self.ego_vehicles[0].get_velocity().length(),
+                        ego_action,
+                        self.ego_vehicles[0].get_location(),
+                        new_dir
+                    )
 
             if self._debug_mode > 2:
                 print("\n")
