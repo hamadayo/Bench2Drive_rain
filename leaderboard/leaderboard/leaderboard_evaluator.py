@@ -579,7 +579,7 @@ def main():
     # !!!!!!!!!!特定のルートのみを実行する場合に指定する
     # parser.add_argument('--routes-subset', default='26990, 24841, 24784, 24781, 24211, 2416', type=str,
     #                     help='Execute a specific set of routes')
-    parser.add_argument('--routes-subset', default='9', type=str,
+    parser.add_argument('--routes-subset', default='', type=str,
                         help='Execute a specific set of routes')
     parser.add_argument('--repetitions', type=int, default=1,
                         help='Number of repetitions per route.')

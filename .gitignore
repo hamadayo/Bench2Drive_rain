@@ -1,1 +1,11 @@
 __pycache__/
+Bench2DriveZoo/
+assets/
+docs/
+eval_v1/
+gabage/
+results/
+output_cluster_str/
+reliability/out_det
+reliability/*.pkl
+reliability/*.h5
